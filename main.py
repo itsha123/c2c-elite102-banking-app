@@ -5,23 +5,25 @@
 
 import msvcrt
 import time
+from collections.abc import Callable
 
 import keyboard
 import mysql.connector
 from rich import print
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.layout import Layout
 from rich.live import Live
 from rich.padding import Padding
 from rich.panel import Panel
 
-from database_operations import check_pass
+from database_operations import check_pass, check_balance, create_user, deposit_money, withdraw_money
 
 keys_to_check = ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=",
                 "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "[", "]", "\\",
                 "a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "'",
-                "z", "x", "c", "v", "b", "n", "m", ",", ".", "/", "backspace"]
+                "z", "x", "c", "v", "b", "n", "m", ",", ".", "/", "backspace",
+                "up", "down", "enter"]
 spec_keys_to_check = ["~", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+",
                         "{", "}", "|",
                         ":", '"',
@@ -39,6 +41,12 @@ def current_key() -> str:
     for key, pressed in key_states.items():
         key_upper = None
         if keyboard.is_pressed(key):
+            if key == "8" and keyboard.is_pressed("up"):
+                key_states[key] = False
+                continue
+            if key == "2" and keyboard.is_pressed("down"):
+                key_states[key] = False
+                continue
             if key in spec_keys_to_check and not keyboard.is_pressed("shift"):
                 key_states[key] = False
                 continue
@@ -58,57 +66,67 @@ def current_key() -> str:
 
     return ""
 
-def login() -> bool:
-    """Login screen for banking app."""
+def draw_screen(
+        run_on_enter: Callable[[dict[int, str], int], bool | int | None],
+        header_content: RenderableType,
+        body_rows: list[str],
+        input_rows: list[str],
+        select_rows: list[str],
+    ) -> bool | int | None:
+    """Draw a live screen in terminal."""
     console = Console()
     layout = Layout()
-    current_cursor_pos = 0
+    cursor_pos = 0
     blink_state = True
-    typed_username = ""
-    typed_password = ""
     layout.split_column(
         Layout(name="header", size=1),
         Layout(name="body"),
     )
-
+    typed_inputs = dict.fromkeys(range(len(input_rows)), "")
     body_height = len(console.render_lines(layout["body"], console.options))
     body_width = console.width
+    def draw_screen(cursor_pos: int) -> Panel:
+        layout["header"].update(Align.center(header_content, vertical="top"))
 
-    def draw_login_screen(cursor_pos: int) -> Panel:
-        layout["header"].update(Align.center("Welcome to SigmaBank!", vertical="top"))
-
-        if blink_state:
-            if cursor_pos == 0:
-                login_block = Group(
-                    "Login:",
-                    "",
-                    f"    User: {typed_username}█",
-                    f"    Pass: {typed_password}",
-                )
-            else:
-                login_block = Group(
-                    "Login:",
-                    "",
-                    f"    User: {typed_username}",
-                    f"    Pass: {typed_password}█",
-                )
-        else:
-            login_block = Group(
-                "Login:",
-                "",
-                f"    User: {typed_username}",
-                f"    Pass: {typed_password}",
-            )
         title_padding_dimensions = (
-            body_height // 2 - 4,
+            0,
             0,
             0,
             body_width // 2 - 3 - 5,
         )
-        layout["body"].update(Padding(login_block, title_padding_dimensions))
+        body_renderables = [Padding(row, title_padding_dimensions) for row in body_rows]
+        login_block = Group(*body_renderables, "")
+        for input_row in input_rows:
+            title_padding_dimensions = (
+                0,
+                0,
+                0,
+                body_width // 2 - 3 - 5,
+            )
+            if cursor_pos == input_rows.index(input_row) and blink_state:
+                login_block.renderables.append(
+                    Padding(f"    {input_row}: {typed_inputs[input_rows.index(input_row)]}█", title_padding_dimensions),
+                )
+            else:
+                login_block.renderables.append(
+                    Padding(f"    {input_row}: {typed_inputs[input_rows.index(input_row)]}", title_padding_dimensions),
+                )
+
+        for select_row in select_rows:
+            title_padding_dimensions = (
+                0,
+                0,
+                0,
+                body_width // 2 - 3 - 5,
+            )
+            if cursor_pos == select_rows.index(select_row) and blink_state:
+                login_block.renderables.append(Padding(f"[black on white]{select_row}", title_padding_dimensions))
+            else:
+                login_block.renderables.append(Padding(f"{select_row}", title_padding_dimensions))
+        layout["body"].update(Padding(login_block, (body_height // 2 - 4, 0, 0, 0)))
         return Panel(layout, height=body_height)
 
-    with Live(draw_login_screen(current_cursor_pos), refresh_per_second=10) as live:
+    with Live(draw_screen(cursor_pos), refresh_per_second=10) as live:
         count = 0
         while True:
             key = current_key()
@@ -116,22 +134,69 @@ def login() -> bool:
             count += 1
             if count % 50 == 0:
                 blink_state = not blink_state
-            if keyboard.is_pressed("up"):
-                current_cursor_pos = max(0, current_cursor_pos - 1)
-            elif keyboard.is_pressed("down"):
-                current_cursor_pos = min(1, current_cursor_pos + 1)
-            elif keyboard.is_pressed("enter"):
-                return check_pass(db, typed_username, typed_password)
-            elif key == "backspace":
-                if current_cursor_pos == 0:
-                    typed_username = typed_username[:-1]
+            if len(input_rows) != 0:
+                if key == "up":
+                    cursor_pos = max(0, cursor_pos - 1)
+                elif key == "down":
+                    cursor_pos = min(len(input_rows) - 1, cursor_pos + 1)
+                elif key == "enter":
+                    return run_on_enter(typed_inputs, cursor_pos)
+                elif key == "backspace":
+                    if cursor_pos == 0:
+                        typed_inputs[cursor_pos] = typed_inputs[cursor_pos][:-1]
+                    else:
+                        typed_inputs[cursor_pos] = typed_inputs[cursor_pos][:-1]
+                elif cursor_pos == 0:
+                    typed_inputs[cursor_pos] += key
                 else:
-                    typed_password = typed_password[:-1]
-            elif current_cursor_pos == 0:
-                typed_username += key
-            else:
-                typed_password += key
-            live.update(draw_login_screen(current_cursor_pos))
+                    typed_inputs[cursor_pos] += key
+            elif len(select_rows) != 0:
+                if key == "up":
+                    cursor_pos = max(0, cursor_pos - 1)
+                elif key == "down":
+                    cursor_pos = min(len(select_rows) - 1, cursor_pos + 1)
+                elif key == "enter":
+                    return run_on_enter(typed_inputs, cursor_pos)
+            live.update(draw_screen(cursor_pos))
+def login() -> bool | int | None:
+    """Show login screen for banking app."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
+        return check_pass(db, typed_inputs[0], typed_inputs[1])
+    return draw_screen(code_to_run,
+        "Welcome to SigmaBank!",
+        ["Login:"],
+        ["User", "Pass"],
+        [],
+    )
+
+def menu() -> int | None:
+    """Show main menu screen for banking app."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> int:
+        return cursor_pos
+    options = ["Create Account",
+        "Delete Account",
+        "Deposit Money",
+        "Withdraw Money",
+        "Exit",
+    ]
+    return draw_screen(code_to_run,
+        "Main Menu",
+        [],
+        [],
+        options,
+    )
+
+def create_account() -> None | int:
+    """Show create account screen."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
+        create_user(db, typed_inputs[0], typed_inputs[1], float(typed_inputs[2]))
+        return True
+    return draw_screen(code_to_run,
+        "Create Account",
+        [],
+        ["User", "Pass", "Initial Deposit"],
+        [],
+    )
 
 def clear_input() -> None:
     """Clear input buffer."""
@@ -143,9 +208,10 @@ def main() -> None:
     while True:
         if login():
             clear_input()
-            print("good")
-            break
+            selected_option = menu()
+            if selected_option == 0:
+                create_account()
         clear_input()
-        print("bad")
-        break
+        print("Wrong username or password. Try again.")
+        time.sleep(1)
 main()
