@@ -16,6 +16,7 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.padding import Padding
 from rich.panel import Panel
+from rich.columns import Columns
 
 from database_operations import check_pass, check_balance, create_user, deposit_money, withdraw_money
 
@@ -158,10 +159,10 @@ def draw_screen(
                 elif key == "enter":
                     return run_on_enter(typed_inputs, cursor_pos)
             live.update(draw_screen(cursor_pos))
-def login() -> bool | int | None:
+def login() -> list[bool | str] | int | None:
     """Show login screen for banking app."""
-    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
-        return check_pass(db, typed_inputs[0], typed_inputs[1])
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> list[bool | str] | int | None:
+        return [check_pass(db, typed_inputs[0], typed_inputs[1]), typed_inputs[0], typed_inputs[1]]
     return draw_screen(code_to_run,
         "Welcome to SigmaBank!",
         ["Login:"],
@@ -169,7 +170,7 @@ def login() -> bool | int | None:
         [],
     )
 
-def menu() -> int | None:
+def menu(username: str) -> int | None:
     """Show main menu screen for banking app."""
     def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> int:
         return cursor_pos
@@ -180,19 +181,19 @@ def menu() -> int | None:
         "Exit",
     ]
     return draw_screen(code_to_run,
-        "Main Menu",
+        Columns([f"User: {username}", f"Balance: ${check_balance(db, username):.2f}"], expand=True),
         [],
         [],
         options,
     )
 
-def create_account() -> None | int:
+def create_account(username: str) -> None | int:
     """Show create account screen."""
     def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
         create_user(db, typed_inputs[0], typed_inputs[1], float(typed_inputs[2]))
         return True
     return draw_screen(code_to_run,
-        "Create Account",
+        Columns([f"User: {username}", f"Balance: ${check_balance(db, username):.2f}"], expand=True),
         [],
         ["User", "Pass", "Initial Deposit"],
         [],
@@ -206,11 +207,13 @@ def clear_input() -> None:
 def main() -> None:
     """Run main logic loop for banking app."""
     while True:
-        if login():
+        login_result = login()
+        if login_result[0]:
+            username = login_result[1]
             clear_input()
-            selected_option = menu()
+            selected_option = menu(username)
             if selected_option == 0:
-                create_account()
+                create_account(username)
         clear_input()
         print("Wrong username or password. Try again.")
         time.sleep(1)
