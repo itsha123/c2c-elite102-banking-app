@@ -3,6 +3,8 @@
 # minimal coding assistance., and ChatGPT, Gemini, GitHub Copilot, and Google AI Mode
 # for help with debugging.
 
+# Note: i was tired and running out of time, so i just quit halfway through on making the code clean and follow linting rules. it works though.
+
 import msvcrt
 import time
 from collections.abc import Callable
@@ -18,7 +20,7 @@ from rich.padding import Padding
 from rich.panel import Panel
 from rich.columns import Columns
 
-from database_operations import check_pass, check_balance, create_user, deposit_money, withdraw_money
+from database_operations import check_pass, check_balance, create_user, deposit_money, withdraw_money, delete_user
 
 keys_to_check = ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=",
                 "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "[", "]", "\\",
@@ -199,6 +201,42 @@ def create_account(username: str) -> None | int:
         [],
     )
 
+def delete_account(username: str) -> None | int:
+    """Show delete account screen."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
+        delete_user(db, typed_inputs[0])
+        return True
+    return draw_screen(code_to_run,
+        Columns([f"User: {username}", f"Balance: ${check_balance(db, username):.2f}"], expand=True),
+        [],
+        ["User"],
+        [],
+    )
+
+def deposit_money_screen(username: str) -> None | int:
+    """Show deposit money screen."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
+        deposit_money(db, typed_inputs[0], float(typed_inputs[1]))
+        return True
+    return draw_screen(code_to_run,
+        Columns([f"User: {username}", f"Balance: ${check_balance(db, username):.2f}"], expand=True),
+        [],
+        ["User", "Amount"],
+        [],
+    )
+
+def withdraw_money_screen(username: str) -> None | int:
+    """Show withdraw money screen."""
+    def code_to_run(typed_inputs: dict[int, str], cursor_pos: int) -> bool:
+        withdraw_money(db, typed_inputs[0], float(typed_inputs[1]))
+        return True
+    return draw_screen(code_to_run,
+        Columns([f"User: {username}", f"Balance: ${check_balance(db, username):.2f}"], expand=True),
+        [],
+        ["User", "Amount"],
+        [],
+    )
+
 def clear_input() -> None:
     """Clear input buffer."""
     while msvcrt.kbhit():
@@ -210,11 +248,20 @@ def main() -> None:
         login_result = login()
         if login_result[0]:
             username = login_result[1]
-            clear_input()
-            selected_option = menu(username)
-            if selected_option == 0:
-                create_account(username)
-        clear_input()
-        print("Wrong username or password. Try again.")
-        time.sleep(1)
+            while True:
+                selected_option = menu(username)
+                if selected_option == 0:
+                    create_account(username)
+                elif selected_option == 1:
+                    delete_account(username)
+                elif selected_option == 2:
+                    deposit_money_screen(username)
+                elif selected_option == 3:
+                    withdraw_money_screen(username)
+                elif selected_option == 4:
+                    clear_input()
+                    exit()
+        else:
+            print("Wrong username or password. Try again.")
+            time.sleep(1)
 main()
